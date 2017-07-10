@@ -13,11 +13,21 @@ import pandas as pd
 
 from .context_tricks import nop_context
 from .paths import ensure_directory
+from .sentinel import sentinel
 
 
 class Expired(Exception):
     """Marks that a :class:`CachedObject` has expired.
     """
+
+
+@object.__new__
+class _LessThanEverything(object):
+    def __lt__(self, other):
+        return True
+
+
+ExpiredCachedObject = sentinel('ExpiredCachedObject')
 
 
 class CachedObject(object):
@@ -51,6 +61,12 @@ class CachedObject(object):
         self._value = value
         self._expires = expires
 
+    @classmethod
+    def expired(cls):
+        """Construct a CachedObject that's expired at any time.
+        """
+        return cls(ExpiredCachedObject, expires=_LessThanEverything)
+
     def unwrap(self, dt):
         """
         Get the cached value.
@@ -65,7 +81,7 @@ class CachedObject(object):
         Expired
             Raised when `dt` is greater than self.expires.
         """
-        if dt > self._expires:
+        if self._expires < dt:
             raise Expired(self._expires)
         return self._value
 
