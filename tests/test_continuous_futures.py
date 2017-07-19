@@ -1377,7 +1377,7 @@ class RollFinderTestCase(WithBcolzFutureDailyBarReader, ZiplineTestCase):
         longer exists.
         """
         date_index = cls.trading_calendar.sessions_in_range(
-            cls.START_DATE,cls.END_DATE,
+            cls.START_DATE, cls.END_DATE,
         )
 
         def create_contract_data(volume):
