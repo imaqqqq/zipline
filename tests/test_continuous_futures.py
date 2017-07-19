@@ -1376,14 +1376,9 @@ class RollFinderTestCase(WithBcolzFutureDailyBarReader, ZiplineTestCase):
         A volume of zero here is used to represent the fact that a contract no
         longer exists.
         """
-        day = cls.trading_calendar.day
-
         daily_data = map(
             list, super(RollFinderTestCase, cls).make_future_daily_bar_data(),
         )
-
-        first_roll_date = pd.Timestamp('2017-01-18', tz='UTC')
-        second_roll_date = pd.Timestamp('2017-02-13', tz='UTC')
 
         first_contract_data = daily_data[0][1]
         first_contract_data['volume'] = 2000
