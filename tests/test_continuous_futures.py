@@ -33,13 +33,15 @@ from zipline.assets.continuous_futures import (
     OrderedContracts,
     delivery_predicate
 )
+from zipline.assets.roll_finder import VolumeRollFinder
 from zipline.data.minute_bars import FUTURES_MINUTES_PER_DAY
 from zipline.errors import SymbolNotFound
 from zipline.testing.fixtures import (
     WithAssetFinder,
+    WithBcolzFutureDailyBarReader,
+    WithBcolzFutureMinuteBarReader,
     WithCreateBarData,
     WithDataPortal,
-    WithBcolzFutureMinuteBarReader,
     WithSimParams,
     ZiplineTestCase,
 )
@@ -1282,6 +1284,154 @@ def record_current_contract(algo, data):
         self.assertEqual(window.loc['2016-02-28 23:01', cf_mul],
                          125250.001,
                          "Should remain FOH16 on next session.")
+
+
+class RollFinderTestCase(WithBcolzFutureDailyBarReader, ZiplineTestCase):
+
+    START_DATE = pd.Timestamp('2017-01-03', tz='UTC')
+    END_DATE = pd.Timestamp('2017-03-17', tz='UTC')
+
+    TRADING_CALENDAR_STRS = ('us_futures',)
+    TRADING_CALENDAR_PRIMARY_CAL = 'us_futures'
+
+    @classmethod
+    def init_class_fixtures(cls):
+        super(RollFinderTestCase, cls).init_class_fixtures()
+
+        cls.volume_roll_finder = VolumeRollFinder(
+            cls.trading_calendar,
+            cls.asset_finder,
+            cls.bcolz_future_daily_bar_reader,
+        )
+
+    @classmethod
+    def make_futures_info(cls):
+        two_days = 2 * cls.trading_calendar.day
+
+        cls.first_end_date = pd.Timestamp('2017-01-20', tz='UTC')
+        cls.second_end_date = pd.Timestamp('2017-02-17', tz='UTC')
+        cls.third_end_date = cls.END_DATE
+
+        return pd.DataFrame.from_dict(
+            {
+                1000: {
+                    'symbol': 'CLF17',
+                    'root_symbol': 'CL',
+                    'start_date': cls.START_DATE,
+                    'end_date': cls.first_end_date,
+                    'auto_close_date': cls.first_end_date - two_days,
+                    'exchange': 'CME',
+                },
+                1001: {
+                    'symbol': 'CLG17',
+                    'root_symbol': 'CL',
+                    'start_date': cls.START_DATE,
+                    'end_date': cls.second_end_date,
+                    'auto_close_date': cls.second_end_date - two_days,
+                    'exchange': 'CME',
+                },
+                1002: {
+                    'symbol': 'CLH17',
+                    'root_symbol': 'CL',
+                    'start_date': cls.START_DATE,
+                    'end_date': cls.third_end_date,
+                    'auto_close_date': cls.third_end_date - two_days,
+                    'exchange': 'CME',
+                },
+            },
+            orient='index',
+        )
+
+    @classmethod
+    def make_future_daily_bar_data(cls):
+        """
+        Volume data should look like this:
+
+                              CLF17      CLG17      CLH17
+                2017-01-03     2000       1000          5
+                2017-01-04     2000       1000          5
+                    ...
+                2017-01-16     2000       1000          5
+                2017-01-17     2000__     1000          5
+        ACD --> 2017-01-18     2000  `--> 1000          5
+                2017-01-19     2000       1000          5
+                2017-01-20     2000       1000          5
+                2017-01-23        0       1000          5
+                    ...
+                2017-02-09        0       1000          5
+                2017-02-10        0       1000__     5000
+                2017-02-13        0       1000  `--> 5000
+                2017-02-14        0       1000       5000
+        ACD --> 2017-02-15        0       1000       5000
+                2017-02-16        0       1000       5000
+                2017-02-17        0       1000       5000
+                2017-02-20        0          0       5000
+                    ...
+                2017-03-16        0          0       5000
+                2017-03-17        0          0       5000
+
+        The first roll occurs because we reach the auto close date of CLF17.
+        The second roll occurs because the volume of CLH17 overtakes CLG17.
+
+        A volume of zero here is used to represent the fact that a contract no
+        longer exists.
+        """
+        day = cls.trading_calendar.day
+
+        daily_data = map(
+            list, super(RollFinderTestCase, cls).make_future_daily_bar_data(),
+        )
+
+        first_roll_date = pd.Timestamp('2017-01-18', tz='UTC')
+        second_roll_date = pd.Timestamp('2017-02-13', tz='UTC')
+
+        first_contract_data = daily_data[0][1]
+        first_contract_data['volume'] = 2000
+
+        second_contract_data = daily_data[1][1]
+        second_contract_data['volume'] = 1000
+
+        third_contract_data = daily_data[2][1]
+        volume_flip_date = pd.Timestamp('2017-02-10', tz='UTC')
+        third_contract_data.loc[:volume_flip_date, 'volume'] = 5
+        third_contract_data.loc[volume_flip_date:, 'volume'] = 5000
+
+        # For the first two contracts, only keep the data for which they exist.
+        daily_data[0][1] = first_contract_data.copy().loc[:cls.first_end_date]
+        daily_data[1][1] = \
+            second_contract_data.copy().loc[:cls.second_end_date]
+
+        return daily_data
+
+    def test_volume_roll(self):
+        day = self.trading_calendar.day
+
+        rolls = self.volume_roll_finder.get_rolls(
+            root_symbol='CL',
+            start=self.START_DATE + day,
+            end=self.END_DATE,
+            offset=0,
+        )
+        self.assertEqual(
+            rolls,
+            [
+                (1000, pd.Timestamp('2017-01-18', tz='UTC')),
+                (1001, pd.Timestamp('2017-02-13', tz='UTC')),
+                (1002, None),
+            ],
+        )
+
+        # If we call 'get_rolls' with start and end dates that do not have any
+        # rolls between them, we should still expect the last roll date to be
+        # computed successfully.
+        date_not_near_roll = pd.Timestamp('2017-02-01', tz='UTC')
+        rolls = self.volume_roll_finder.get_rolls(
+            root_symbol='CL',
+            start=date_not_near_roll,
+            end=date_not_near_roll + day,
+            offset=0,
+        )
+        self.assertEqual(rolls, [(1001, None)])
 
 
 class OrderedContractsTestCase(WithAssetFinder,

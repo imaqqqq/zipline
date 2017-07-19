@@ -173,11 +173,11 @@ class VolumeRollFinder(RollFinder):
         front_contract = oc.sid_to_contract[front].contract
         back_contract = oc.sid_to_contract[back].contract
 
-        # If the front contract does not even exist anymore on the given date,
-        # the back contract must be the active one, so return it immediately.
-        # Similarly, if the back contract has not even started yet, just return
-        # the front contract.
-        if dt > front_contract.end_date:
+        # If the front contract has reached its auto close date, the back
+        # contract must be the active one, so return it immediately. Similarly,
+        # in the rare case that the back contract has not even started yet,
+        # short circuit here and return the front contract.
+        if dt >= front_contract.auto_close_date:
             return back
         elif dt < back_contract.start_date:
             return front
@@ -186,10 +186,10 @@ class VolumeRollFinder(RollFinder):
         trading_day = tc.day
         prev = dt - trading_day
         get_value = self.session_reader.get_value
+
         front_vol = get_value(front, prev, 'volume')
         back_vol = get_value(back, prev, 'volume')
-
-        if dt >= front_contract.auto_close_date or back_vol > front_vol:
+        if back_vol > front_vol:
             return back
 
         gap_start = \

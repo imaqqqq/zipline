@@ -1058,6 +1058,8 @@ class WithBcolzFutureDailyBarReader(WithFutureDailyBarData, WithTmpDir):
     # options are: 'warn', 'raise', 'ignore'
     BCOLZ_FUTURE_DAILY_BAR_INVALID_DATA_BEHAVIOR = 'warn'
 
+    _write_method_name = 'write'
+
     @classmethod
     def make_bcolz_future_daily_bar_rootdir_path(cls):
         return cls.tmpdir.makedir(cls.BCOLZ_FUTURE_DAILY_BAR_PATH)
