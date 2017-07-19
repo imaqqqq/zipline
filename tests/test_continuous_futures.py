@@ -1376,27 +1376,26 @@ class RollFinderTestCase(WithBcolzFutureDailyBarReader, ZiplineTestCase):
         A volume of zero here is used to represent the fact that a contract no
         longer exists.
         """
-        daily_data = map(
-            list, super(RollFinderTestCase, cls).make_future_daily_bar_data(),
+        date_index = cls.trading_calendar.sessions_in_range(
+            cls.START_DATE,cls.END_DATE,
         )
 
-        first_contract_data = daily_data[0][1]
-        first_contract_data['volume'] = 2000
+        def create_contract_data(volume):
+            return DataFrame(
+                {'open': 5, 'high': 6, 'low': 4, 'close': 5, 'volume': volume},
+                index=date_index,
+            )
 
-        second_contract_data = daily_data[1][1]
-        second_contract_data['volume'] = 1000
+        first_contract_data = create_contract_data(2000)
+        yield 1000, first_contract_data.copy().loc[:cls.first_end_date]
 
-        third_contract_data = daily_data[2][1]
+        second_contract_data = create_contract_data(1000)
+        yield 1001, second_contract_data.copy().loc[:cls.second_end_date]
+
+        third_contract_data = create_contract_data(5)
         volume_flip_date = pd.Timestamp('2017-02-10', tz='UTC')
-        third_contract_data.loc[:volume_flip_date, 'volume'] = 5
         third_contract_data.loc[volume_flip_date:, 'volume'] = 5000
-
-        # For the first two contracts, only keep the data for which they exist.
-        daily_data[0][1] = first_contract_data.copy().loc[:cls.first_end_date]
-        daily_data[1][1] = \
-            second_contract_data.copy().loc[:cls.second_end_date]
-
-        return daily_data
+        yield 1002, third_contract_data
 
     def test_volume_roll(self):
         day = self.trading_calendar.day
